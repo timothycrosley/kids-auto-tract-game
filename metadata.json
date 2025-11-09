@@ -1,0 +1,5 @@
+{
+  "name": "React Auto Track",
+  "description": "A game where you build tracks for autonomous cars. Place straight, curved, bridge, tunnel, and special turntable pieces to create complex circuits for up to 5 unique cars that move and blink on their own.",
+  "requestFramePermissions": []
+}
