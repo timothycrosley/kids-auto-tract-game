@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Tool, GridCell, Car, TurntableState, Direction, TrackType, SceneryType } from './types';
-import { GRID_WIDTH, GRID_HEIGHT, CAR_SPEED, CAR_DESIGNS } from './constants';
+import { GRID_WIDTH, GRID_HEIGHT, CAR_SPEED, CAR_DESIGNS, TRACK_CONNECTIONS } from './constants';
 import Grid from './components/Grid';
 import Toolbar from './components/Toolbar';
 
@@ -8,23 +8,40 @@ const createInitialGrid = (): GridCell[][] => {
     const grid = Array(GRID_HEIGHT).fill(null).map(() =>
         Array(GRID_WIDTH).fill(null).map(() => ({ ground: null, air: null, scenery: null }))
     );
-    // A simple loop
-    grid[5][5].ground = TrackType.CURVE_NE;
-    grid[5][6].ground = TrackType.STRAIGHT_H;
-    grid[5][7].ground = TrackType.CURVE_SE;
-    grid[6][7].ground = TrackType.STRAIGHT_V;
-    grid[7][7].ground = TrackType.CURVE_SW;
-    grid[7][6].ground = TrackType.STRAIGHT_H;
-    grid[7][5].ground = TrackType.CURVE_NW;
-    grid[6][5].ground = TrackType.STRAIGHT_V;
+    // A simple clockwise loop - visually forms a rectangle
+    // ╔ ═══════════ ╗
+    // ║             ║
+    // ╚ ═══════════ ╝
+
+    // Row 5 (top): ╔ ═ ═ ╗
+    grid[5][5].ground = TrackType.CURVE_NE;   // ╔ top-left corner
+    grid[5][6].ground = TrackType.STRAIGHT_H; // ═ horizontal
+    grid[5][7].ground = TrackType.STRAIGHT_H; // ═ horizontal
+    grid[5][8].ground = TrackType.CURVE_NW;   // ╗ top-right corner
+
+    // Column 8 (right): ║
+    grid[6][8].ground = TrackType.STRAIGHT_V; // ║ vertical
+    grid[7][8].ground = TrackType.STRAIGHT_V; // ║ vertical
+
+    // Row 8 (bottom): ╚ ═ ═ ╝
+    grid[8][8].ground = TrackType.CURVE_SW;   // ╝ bottom-right corner
+    grid[8][7].ground = TrackType.STRAIGHT_H; // ═ horizontal
+    grid[8][6].ground = TrackType.STRAIGHT_H; // ═ horizontal
+    grid[8][5].ground = TrackType.CURVE_SE;   // ╚ bottom-left corner
+
+    // Column 5 (left): ║
+    grid[6][5].ground = TrackType.STRAIGHT_V; // ║ vertical
+    grid[7][5].ground = TrackType.STRAIGHT_V; // ║ vertical
+
     return grid;
 };
 
 const initialCars: Car[] = [{
     id: 0,
-    x: 6, y: 5,
+    x: 6, y: 5,  // On the top horizontal straight
     level: 0,
-    direction: Direction.EAST,
+    direction: Direction.EAST, // Traveling east along the top
+    entryFrom: Direction.WEST,
     progress: 0,
     design: CAR_DESIGNS[0]
 }];
@@ -66,6 +83,15 @@ const App: React.FC = () => {
     } catch (e) {
         console.error("Failed to load tracks from local storage", e);
     }
+  }, []);
+
+  const resetToStarterLoop = useCallback(() => {
+    setGrid(createInitialGrid());
+    setTurntables([]);
+    setTurntableRotations(new Map());
+    setCars(initialCars.map(car => ({ ...car })));
+    nextCarId.current = initialCars.length;
+    setIsLoadModalOpen(false);
   }, []);
 
   const playSound = useCallback((type: 'place' | 'erase' | 'car' | 'turntable') => {
@@ -132,46 +158,15 @@ const App: React.FC = () => {
   };
 
   const getExitDirection = (track: TrackType, entryDir: Direction): Direction | null => {
-    const opposite = getOppositeDirection(entryDir);
-    switch (track) {
-        case TrackType.STRAIGHT_V:
-        case TrackType.BRIDGE_V:
-        case TrackType.TUNNEL_V:
-            return (entryDir === Direction.NORTH || entryDir === Direction.SOUTH) ? opposite : null;
-
-        case TrackType.STRAIGHT_H:
-        case TrackType.BRIDGE_H:
-        case TrackType.TUNNEL_H:
-            return (entryDir === Direction.EAST || entryDir === Direction.WEST) ? opposite : null;
-
-        case TrackType.CURVE_NE: // ╔
-            if (entryDir === Direction.SOUTH) return Direction.EAST;
-            if (entryDir === Direction.WEST) return Direction.NORTH;
-            return null;
-
-        case TrackType.CURVE_SE: // ╚
-            if (entryDir === Direction.NORTH) return Direction.EAST;
-            if (entryDir === Direction.WEST) return Direction.SOUTH;
-            return null;
-
-        case TrackType.CURVE_SW: // ╝
-            if (entryDir === Direction.NORTH) return Direction.WEST;
-            if (entryDir === Direction.EAST) return Direction.SOUTH;
-            return null;
-
-        case TrackType.CURVE_NW: // ╗
-            if (entryDir === Direction.SOUTH) return Direction.WEST;
-            if (entryDir === Direction.EAST) return Direction.NORTH;
-            return null;
-
-        default:
-            return null;
-    }
+    const options = TRACK_CONNECTIONS[track];
+    if (!options) return null;
+    const match = options.find(conn => conn.entry === entryDir);
+    return match ? match.exit : null;
   };
 
   const gameLoop = useCallback(() => {
     setCars(prevCars => prevCars.map(car => {
-        let { x, y, level, direction, progress, id, design } = car;
+        let { x, y, level, direction, progress, id, design, entryFrom } = car;
         progress += CAR_SPEED;
         if (progress >= 1) {
             progress = 0;
@@ -195,14 +190,14 @@ const App: React.FC = () => {
                 x = nextPos.x;
                 y = nextPos.y;
                 level = nextLevel;
+                const entrySide = getOppositeDirection(currentDirection);
+                entryFrom = entrySide;
                 
-                const entryDir = getOppositeDirection(currentDirection);
-
                 if (nextTrack === TrackType.TURNTABLE) {
                     const turntable = turntables.find(t => t.x === x && t.y === y);
                     if (turntable) {
                         const connections = [Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST].filter(dir => {
-                            if(dir === entryDir) return false;
+                            if(dir === entrySide) return false;
                             const checkPos = getNextTile(x, y, dir);
                             const neighborTrack = getTrackAt(checkPos.x, checkPos.y, level);
                             if (neighborTrack === null) return false;
@@ -225,14 +220,14 @@ const App: React.FC = () => {
                         }
                     }
                 } else {
-                    const newDirection = getExitDirection(nextTrack, entryDir);
+                    const newDirection = getExitDirection(nextTrack, entrySide);
                     if (newDirection !== null) {
                         direction = newDirection;
                     }
                 }
             }
         }
-        return { id, x, y, level, direction, progress, design };
+        return { id, x, y, level, direction, entryFrom, progress, design };
     }));
     animationFrameId.current = requestAnimationFrame(gameLoop);
   }, [grid, turntables, playSound]);
@@ -302,6 +297,7 @@ const App: React.FC = () => {
             x, y,
             level: grid[y][x].air ? 1 : 0,
             direction: initialDirection,
+            entryFrom: getOppositeDirection(initialDirection),
             progress: 0,
             design: carDesign
           }]);
@@ -401,7 +397,14 @@ const App: React.FC = () => {
           <div className="fixed inset-0 bg-black/60 z-30 flex items-center justify-center" onClick={() => setIsLoadModalOpen(false)}>
               <div className="bg-gray-800 text-white rounded-xl shadow-2xl p-6 w-full max-w-md" onClick={e => e.stopPropagation()}>
                   <h2 className="text-2xl font-bold mb-4">Load a Track</h2>
-                  <div className="max-h-96 overflow-y-auto space-y-2 pr-2">
+                  <div className="max-h-96 overflow-y-auto space-y-3 pr-2">
+                      <div className="flex justify-between gap-3 items-center bg-gray-700 p-3 rounded-lg border border-gray-600">
+                          <div>
+                              <p className="font-semibold">Starter Loop</p>
+                              <p className="text-sm text-gray-300">Restore the original rectangular loop with a demo car.</p>
+                          </div>
+                          <button onClick={resetToStarterLoop} className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-semibold">Load</button>
+                      </div>
                       {Object.keys(savedTracks).length > 0 ? Object.keys(savedTracks).map(name => (
                           <div key={name} className="flex justify-between items-center bg-gray-700 p-3 rounded-lg">
                               <span className="font-medium">{name}</span>

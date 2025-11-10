@@ -51,6 +51,7 @@ export interface Car {
   y: number; // grid y
   level: 0 | 1; // 0 for ground/tunnel, 1 for bridge
   direction: Direction;
+  entryFrom: Direction;
   progress: number; // progress along current tile (0 to 1)
   design: CarDesign;
 }
